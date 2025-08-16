@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: mdqa_system_backend
+    env_file:
+      - backend/.env
+    volumes:
+      - ./backend:/app
+      - ./data/sqlite:/app/data/sqlite
+      - ./uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      - chroma
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  frontend:
+    build: ./frontend
+    container_name: mdqa_system_frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://backend:8000
+    depends_on:
+      - backend
+    command: ["npm", "run", "dev", "--", "--host"]
+
+  chroma:
+    # UPDATED: Using a modern ChromaDB image compatible with the new client
+    image: chromadb/chroma:0.5.4
+    container_name: mdqa_system_chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - ./data/chroma:/chroma/chroma
+    ports:
+      - "8001:8000"
