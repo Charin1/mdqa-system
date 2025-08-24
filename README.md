@@ -1,5 +1,9 @@
 # MDQA-System: Your Personal Document Intelligence Engine
 
+![status](https://img.shields.io/badge/status-in_development-yellow)
+
+⚠️ This project is under active development and is **not production-ready**.
+
 MDQA-System is a powerful, private, and intelligent platform that transforms your personal or professional documents into a searchable knowledge base. Upload your PDFs, DOCX files, and text documents, and ask complex questions in natural language to get synthesized, accurate answers based solely on the provided content.
 
 This project is built with a modern, robust stack featuring a FastAPI backend and a React frontend. It leverages a sophisticated, local-first RAG (Retrieval-Augmented Generation) pipeline, ensuring your data remains completely private and secure on your own machine.
@@ -142,3 +146,6 @@ This project is a powerful foundation. Here are some potential next steps:
 ## Contributing
 
 Contributions are welcome! Please feel free to fork the repository, make your changes, and submit a pull request.
+
+## Status
+This project is still in its early stages. Expect breaking changes.
