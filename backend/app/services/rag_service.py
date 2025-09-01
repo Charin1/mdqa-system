@@ -24,14 +24,17 @@ class RAGService:
         end_time = time.time()
         response_time = end_time - start_time
 
-        sources = [
-            {
+        sources = []
+        for h in hits:
+            # Explicitly cast the NumPy float to a standard Python float
+            # before rounding and adding it to the dictionary.
+            score = round(float(h["rerank_score"]), 4)
+            
+            sources.append({
                 "filename": h["metadata"].get("filename"), 
                 "page": h["metadata"].get("page"), 
-                "score": round(h["score"], 4)
-            }
-            for h in hits
-        ]
+                "score": score
+            })
         
         self._save_conversation(payload, answer, confidence, sources, response_time)
 
