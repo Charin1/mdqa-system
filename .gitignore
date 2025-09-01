@@ -69,3 +69,5 @@ frontend/.DS_Store
 # Data
 data/
 uploads/
+
+.DS_Store
