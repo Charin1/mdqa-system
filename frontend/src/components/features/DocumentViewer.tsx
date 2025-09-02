@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+// CORRECTED: Import useRef
+import { useEffect, useState, useRef } from 'react';
+// CORRECTED: Import useSearchParams
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../services/api';
 import { Card } from '../ui/Card';
 import { Loader } from '../ui/Loader';
@@ -16,9 +18,16 @@ type Chunk = {
 const DocumentViewer = () => {
   const { docId } = useParams();
   const navigate = useNavigate();
+  // CORRECTED: Get search params from the URL
+  const [searchParams] = useSearchParams();
+  const highlightChunkId = searchParams.get('highlight');
+
   const [doc, setDoc] = useState<any>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // CORRECTED: Create a ref to hold references to the chunk elements
+  const chunkRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     if (!docId) return;
@@ -38,6 +47,17 @@ const DocumentViewer = () => {
     };
     fetchData();
   }, [docId]);
+
+  // CORRECTED: New effect to handle scrolling and highlighting
+  useEffect(() => {
+    if (highlightChunkId && chunks.length > 0) {
+      const ref = chunkRefs.current.get(highlightChunkId);
+      if (ref) {
+        ref.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [highlightChunkId, chunks]);
+
 
   const handleDownload = async () => {
     const response = await api.get(`/documents/${docId}/download`, { responseType: 'blob' });
@@ -74,14 +94,26 @@ const DocumentViewer = () => {
       
       <h2 className="text-xl font-semibold">Document Chunks</h2>
       <div className="space-y-4">
-        {chunks.map(chunk => (
-          <Card key={chunk.id} className="p-4 bg-muted/50">
-            <p className="text-sm text-muted-foreground">
-              Chunk ID: {chunk.id.substring(0, 8)}... {chunk.page && `(Page ${chunk.page})`}
-            </p>
-            <p className="mt-2 text-foreground/80">{chunk.text_preview}</p>
-          </Card>
-        ))}
+        {chunks.map(chunk => {
+          const isHighlighted = chunk.id === highlightChunkId;
+          return (
+            <div
+              // CORRECTED: Assign a ref to each chunk element
+              ref={node => {
+                if (node) chunkRefs.current.set(chunk.id, node);
+                else chunkRefs.current.delete(chunk.id);
+              }}
+              key={chunk.id}
+              // CORRECTED: Apply conditional styling for highlighting
+              className={`p-4 rounded-lg transition-all ${isHighlighted ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/50'}`}
+            >
+              <p className="text-sm text-muted-foreground">
+                Chunk ID: {chunk.id.substring(0, 8)}... {chunk.page && `(Page ${chunk.page})`}
+              </p>
+              <p className="mt-2 text-foreground/80">{chunk.text_preview}</p>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

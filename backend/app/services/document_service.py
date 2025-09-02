@@ -4,6 +4,7 @@ import hashlib
 import json
 import traceback
 from typing import List, Dict, Any
+import pprint # Added for pretty-printing
 
 from fastapi import Depends, UploadFile, HTTPException, status
 from fastapi.responses import FileResponse
@@ -19,10 +20,6 @@ from ..parsers import pdf_parser, docx_parser, text_parser, md_parser, html_pars
 from ..rag.retrieve import embed_texts, chunk_text
 
 class DocumentService:
-    """
-    A service layer responsible for all business logic related to documents.
-    """
-    # CORRECTED: Changed from next(get_session()) to Depends(get_session)
     def __init__(self, session: Session = Depends(get_session)):
         self.session = session
         self.chroma_collection = get_or_create_collection()
@@ -37,54 +34,53 @@ class DocumentService:
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
     async def process_uploaded_files(self, files: List[UploadFile]) -> UploadResponse:
-        """
-        Processes a list of uploaded files with enhanced debugging.
-        """
         success_docs = []
         error_docs = []
 
         for file in files:
             filepath = None
             try:
-                print(f"\n--- [DEBUG] Starting processing for file: {file.filename} ---")
-
                 content = await file.read()
                 content_hash = hashlib.sha256(content).hexdigest()
 
                 existing_doc = self.session.exec(select(Document).where(Document.content_hash == content_hash)).first()
                 if existing_doc:
-                    print(f"[DEBUG] File {file.filename} is a duplicate. Skipping.")
                     error_docs.append({"filename": file.filename, "error": "Duplicate document already exists."})
                     continue
 
                 filepath = os.path.join(settings.UPLOAD_DIR, f"{uuid.uuid4()}_{file.filename}")
                 with open(filepath, "wb") as buffer:
                     buffer.write(content)
-                print(f"[DEBUG] File saved to: {filepath}")
 
                 ext = os.path.splitext(file.filename)[1].lower()
                 parser = self.parsers.get(ext)
                 if not parser:
                     raise ValueError(f"Unsupported file type: '{ext}'")
                 
-                print(f"[DEBUG] Using parser: {parser.__class__.__name__}")
                 parsed_result = parser.parse(filepath)
-                print("[DEBUG] Parsing complete.")
 
                 chunks = self._chunk_and_embed(parsed_result, file.filename, filepath)
-                print(f"[DEBUG] Chunking and embedding complete. Found {len(chunks)} chunks.")
                 
                 if chunks:
-                    print("[DEBUG] Preparing to add data to ChromaDB...")
+                    # --- THIS IS DEBUG STEP 2 ---
+                    print("\n--- [DEBUG CHECKPOINT 2: METADATA BEFORE STORAGE] ---")
+                    # Print the metadata of the first 3 chunks to be stored.
+                    metadatas_to_add = [c['metadata'] for c in chunks]
+                    pprint.pprint(metadatas_to_add[:3])
+                    print("--- [DEBUG] END OF PRE-STORAGE METADATA ---\n")
+                    # --- END OF DEBUG STEP 2 ---
+
+                    sanitized_metadatas = []
+                    for c in chunks:
+                        clean_meta = {k: v for k, v in c['metadata'].items() if v is not None}
+                        sanitized_metadatas.append(clean_meta)
+
                     self.chroma_collection.add(
                         ids=[c['id'] for c in chunks],
                         documents=[c['text'] for c in chunks],
                         embeddings=[c['embedding'] for c in chunks],
-                        metadatas=[c['metadata'] for c in chunks]
+                        metadatas=sanitized_metadatas
                     )
-                    print("[DEBUG] Successfully added data to ChromaDB.")
-                else:
-                    print("[DEBUG] No chunks were generated. Skipping ChromaDB add.")
 
                 doc = Document(
                     filename=file.filename,
@@ -96,7 +92,6 @@ class DocumentService:
                 self.session.add(doc)
                 self.session.commit()
                 self.session.refresh(doc)
-                print("[DEBUG] Successfully saved document metadata to SQLite.")
                 
                 success_docs.append(DocumentOut(
                     id=doc.id, filename=doc.filename, chunk_count=doc.chunk_count,
@@ -104,36 +99,57 @@ class DocumentService:
                 ))
 
             except Exception as e:
-                # THIS IS THE MOST IMPORTANT PART
-                print(f"\n---!!! [DEBUG] AN ERROR OCCURRED while processing {file.filename} !!!---")
-                # Print the full, detailed traceback to the console
                 traceback.print_exc()
-                print("---!!! [DEBUG] END OF ERROR TRACEBACK !!!---\n")
-                
                 error_docs.append({"filename": file.filename, "error": str(e)})
                 if filepath and os.path.exists(filepath):
                     os.remove(filepath)
         
         return UploadResponse(success=success_docs, errors=error_docs)
 
-
     def _chunk_and_embed(self, parsed: ParseResult, filename: str, filepath: str) -> List[Dict[str, Any]]:
-        chunks_with_metadata = chunk_text(
-            parsed.text,
-            chunk_size=settings.DEFAULT_CHUNK_SIZE,
-            overlap=settings.DEFAULT_CHUNK_OVERLAP,
-            metadata={"filename": filename, "source_path": filepath}
-        )
-        
-        if not chunks_with_metadata:
+        text_units = []
+        if "pages" in parsed.metadata and parsed.metadata["pages"]:
+            for page_data in parsed.metadata["pages"]:
+                text_units.append({
+                    "text": page_data.get("text", ""),
+                    "metadata": {"page": page_data.get("page_number")}
+                })
+        else:
+            text_units.append({
+                "text": parsed.text,
+                "metadata": {"page": None}
+            })
+
+        all_chunks = []
+        for unit in text_units:
+            unit_text = unit.get("text", "")
+            unit_metadata = unit.get("metadata", {})
+            
+            if not unit_text.strip():
+                continue
+
+            base_metadata = {
+                "filename": filename,
+                "source_path": filepath,
+                **unit_metadata
+            }
+            
+            unit_chunks = chunk_text(
+                unit_text,
+                chunk_size=settings.DEFAULT_CHUNK_SIZE,
+                overlap=settings.DEFAULT_CHUNK_OVERLAP,
+                metadata=base_metadata
+            )
+            all_chunks.extend(unit_chunks)
+
+        if not all_chunks:
             return []
 
-        texts_to_embed = [c['text'] for c in chunks_with_metadata]
+        texts_to_embed = [c['text'] for c in all_chunks]
         embeddings = embed_texts(texts_to_embed)
 
         results = []
-        for i, chunk in enumerate(chunks_with_metadata):
-            print(chunk)
+        for i, chunk in enumerate(all_chunks):
             results.append({
                 "id": str(uuid.uuid4()),
                 "text": chunk['text'],
@@ -162,12 +178,9 @@ class DocumentService:
         doc = self.session.get(Document, doc_id)
         if not doc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-        
         results = self.chroma_collection.get(where={"filename": doc.filename}, include=["metadatas", "documents"])
-        
         if not results or not results['ids']:
             return []
-
         chunks = []
         for i, doc_text in enumerate(results['documents']):
             meta = results['metadatas'][i]
@@ -190,13 +203,9 @@ class DocumentService:
         doc = self.session.get(Document, doc_id)
         if not doc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-        
         self.chroma_collection.delete(where={"filename": doc.filename})
-        
         self.session.delete(doc)
         self.session.commit()
-        
         if os.path.exists(doc.filepath):
             os.remove(doc.filepath)
-        
         return None

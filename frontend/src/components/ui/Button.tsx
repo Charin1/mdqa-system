@@ -7,12 +7,16 @@ const variants = {
 };
 
 const sizes = {
+  // CORRECTED: Added the 'sm' size definition.
+  // This makes the button smaller with less padding and smaller text.
+  sm: 'px-3 py-1 text-xs',
   md: 'px-4 py-2 text-sm',
   icon: 'h-10 w-10',
 };
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: keyof typeof variants;
+  // This type will now automatically infer 'sm' | 'md' | 'icon'
   size?: keyof typeof sizes;
 }
 

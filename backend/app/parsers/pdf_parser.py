@@ -1,14 +1,12 @@
 import logging
 import pdfplumber
 from typing import List, Dict, Any
+import pprint # Added for pretty-printing
 
-# Import our project's settings and base classes
 from ..core.settings import settings
 from .base import BaseParser, ParseResult
 
 # --- Lazy-loading OCR Engine ---
-# This is a best practice. It means we only import and initialize the heavy OCR library
-# if and when it's actually needed, which keeps application startup fast.
 _PADDLE_OCR_ENGINE = None
 
 def _get_paddleocr():
@@ -18,7 +16,6 @@ def _get_paddleocr():
         return _PADDLE_OCR_ENGINE
 
     try:
-        # This import can be slow, so we do it on demand.
         from paddleocr import PaddleOCR
         print("--- [INFO] Initializing PaddleOCR engine for the first time... ---")
         _PADDLE_OCR_ENGINE = PaddleOCR(use_angle_cls=True, lang=settings.PADDLEOCR_LANG, use_gpu=settings.PADDLEOCR_USE_GPU)
@@ -31,18 +28,12 @@ def _get_paddleocr():
         logging.error(f"Failed to initialize PaddleOCR engine: {e}")
         return None
 
-# --- The New, Robust PDF Parser ---
-
+# --- The PDF Parser with Integrated Debugging ---
 class PDFParser(BaseParser):
     def parse(self, file_path: str) -> ParseResult:
-        """
-        Parses a PDF document, attempting to extract text directly. If no text is found
-        (indicating a scanned/image-based PDF), it will use OCR as a fallback.
-        
-        This parser will raise exceptions for corrupt or encrypted files.
-        """
         full_text_parts = []
         doc_metadata = {}
+        pages_metadata_list = [] # A list to hold metadata for each page
 
         with pdfplumber.open(file_path) as pdf:
             doc_metadata = {
@@ -53,24 +44,16 @@ class PDFParser(BaseParser):
 
             for i, page in enumerate(pdf.pages):
                 page_num = i + 1
-                
-                # 1. First, try the fast, direct text extraction
                 text = page.extract_text() or ""
                 
-                # 2. If no text is found and OCR is enabled, use OCR as a fallback
                 if not text.strip() and settings.OCR_ENABLED:
                     logging.info(f"Page {page_num} of '{file_path}' contains no text. Attempting OCR...")
                     ocr_engine = _get_paddleocr()
                     if ocr_engine:
                         try:
-                            # Convert page to an image for OCR
                             img = page.to_image(resolution=300).original
-                            
-                            # Run OCR and extract text
                             result = ocr_engine.ocr(img, cls=True)
                             if result and result[0] is not None:
-                                # The result is a list of lines, where each line has text and confidence.
-                                # We extract just the text for each line.
                                 line_texts = [line[1][0] for line in result[0]]
                                 text = "\n".join(line_texts)
                                 logging.info(f"Successfully extracted {len(line_texts)} lines of text via OCR from page {page_num}.")
@@ -78,12 +61,23 @@ class PDFParser(BaseParser):
                                 logging.warning(f"OCR run on page {page_num} but returned no results.")
                         except Exception as e:
                             logging.error(f"Error during OCR on page {page_num}: {e}")
-                            # If OCR fails, we just fall back to the empty text
                 
                 full_text_parts.append(text)
+                # Store this page's specific metadata
+                pages_metadata_list.append({
+                    "text": text,
+                    "page_number": page_num
+                })
 
         final_text = "\n\n".join(full_text_parts).strip()
-        if not final_text:
-            logging.warning(f"PDF '{file_path}' resulted in zero extractable text after parsing and OCR attempts.")
+        doc_metadata["pages"] = pages_metadata_list
+
+        # --- THIS IS DEBUG STEP 1 ---
+        print("\n--- [DEBUG CHECKPOINT 1: PDF PARSER OUTPUT] ---")
+        # We print the metadata structure to see if page numbers are present.
+        # We only show the 'pages' part for brevity.
+        pprint.pprint(doc_metadata.get("pages", "NO PAGES KEY FOUND"))
+        print("--- [DEBUG] END OF PARSER OUTPUT ---\n")
+        # --- END OF DEBUG STEP 1 ---
 
         return ParseResult(text=final_text, metadata=doc_metadata)
