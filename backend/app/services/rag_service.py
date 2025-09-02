@@ -1,7 +1,6 @@
 import time
 import json
 from typing import Dict, Any, List
-import pprint # Added for pretty-printing
 
 from fastapi import Depends
 from sqlmodel import Session, select
@@ -20,14 +19,6 @@ class RAGService:
         start_time = time.time()
 
         hits = retrieve_hybrid(payload.query, top_k=payload.top_k)
-        
-        # --- THIS IS DEBUG STEP 3 ---
-        print("\n--- [DEBUG CHECKPOINT 3: DATA RETRIEVED FROM DB] ---")
-        # Print the full 'hits' object to see what came back from Chroma.
-        pprint.pprint(hits)
-        print("--- [DEBUG] END OF RETRIEVED DATA ---\n")
-        # --- END OF DEBUG STEP 3 ---
-
         answer, confidence = generate_simple_answer(payload.query, hits)
         
         end_time = time.time()
@@ -57,13 +48,6 @@ class RAGService:
                     "score": score
                 })
         
-        # --- THIS IS DEBUG STEP 4 ---
-        print("\n--- [DEBUG CHECKPOINT 4: FINAL API RESPONSE] ---")
-        # Print the final 'sources' object being sent to the frontend.
-        pprint.pprint(sources)
-        print("--- [DEBUG] END OF API RESPONSE DATA ---\n")
-        # --- END OF DEBUG STEP 4 ---
-
         self._save_conversation(payload, answer, confidence, sources, response_time)
 
         return ChatQueryOut(answer=answer, confidence=confidence, sources=sources)

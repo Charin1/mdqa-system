@@ -1,7 +1,6 @@
 import logging
 import pdfplumber
 from typing import List, Dict, Any
-import pprint # Added for pretty-printing
 
 from ..core.settings import settings
 from .base import BaseParser, ParseResult
@@ -28,7 +27,7 @@ def _get_paddleocr():
         logging.error(f"Failed to initialize PaddleOCR engine: {e}")
         return None
 
-# --- The PDF Parser with Integrated Debugging ---
+# --- The PDF Parser (Final Version) ---
 class PDFParser(BaseParser):
     def parse(self, file_path: str) -> ParseResult:
         full_text_parts = []
@@ -71,13 +70,5 @@ class PDFParser(BaseParser):
 
         final_text = "\n\n".join(full_text_parts).strip()
         doc_metadata["pages"] = pages_metadata_list
-
-        # --- THIS IS DEBUG STEP 1 ---
-        print("\n--- [DEBUG CHECKPOINT 1: PDF PARSER OUTPUT] ---")
-        # We print the metadata structure to see if page numbers are present.
-        # We only show the 'pages' part for brevity.
-        pprint.pprint(doc_metadata.get("pages", "NO PAGES KEY FOUND"))
-        print("--- [DEBUG] END OF PARSER OUTPUT ---\n")
-        # --- END OF DEBUG STEP 1 ---
 
         return ParseResult(text=final_text, metadata=doc_metadata)

@@ -4,7 +4,6 @@ import hashlib
 import json
 import traceback
 from typing import List, Dict, Any
-import pprint # Added for pretty-printing
 
 from fastapi import Depends, UploadFile, HTTPException, status
 from fastapi.responses import FileResponse
@@ -62,14 +61,6 @@ class DocumentService:
                 chunks = self._chunk_and_embed(parsed_result, file.filename, filepath)
                 
                 if chunks:
-                    # --- THIS IS DEBUG STEP 2 ---
-                    print("\n--- [DEBUG CHECKPOINT 2: METADATA BEFORE STORAGE] ---")
-                    # Print the metadata of the first 3 chunks to be stored.
-                    metadatas_to_add = [c['metadata'] for c in chunks]
-                    pprint.pprint(metadatas_to_add[:3])
-                    print("--- [DEBUG] END OF PRE-STORAGE METADATA ---\n")
-                    # --- END OF DEBUG STEP 2 ---
-
                     sanitized_metadatas = []
                     for c in chunks:
                         clean_meta = {k: v for k, v in c['metadata'].items() if v is not None}
