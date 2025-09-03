@@ -1,13 +1,12 @@
 import { useRef, useEffect, useState } from 'react';
 import { Send, Bot, User, RefreshCw } from 'lucide-react';
-import { api } from '../../services/api';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../../store/useAppStore';
+import { API_BASE_URL } from '../../config';
 
 const Chat = () => {
-  // ... (all the existing state and functions remain the same) ...
   const { 
     sessionId, 
     messages, 
@@ -23,32 +22,78 @@ const Chat = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    chatLogRef.current?.scrollTo(0, chatLogRef.current.scrollHeight);
+    // A small timeout to allow the DOM to update before scrolling
+    setTimeout(() => {
+      chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' });
+    }, 100);
   }, [messages]);
 
   const handleSend = async () => {
-    // ... (this function remains the same) ...
     if (!input.trim()) return;
+
     const userMessage = { role: 'user' as const, text: input };
     addMessage(userMessage);
     const currentInput = input;
     setInput('');
-    startLoading();
+    startLoading(); // Show the "Thinking..." UI
 
     try {
-      const res = await api.post('/chat/query', { session_id: sessionId, query: currentInput });
-      const botMessage = { role: 'bot' as const, text: res.data.answer, sources: res.data.sources };
-      addMessage(botMessage);
+      const response = await fetch(`${API_BASE_URL}/api/chat/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, query: currentInput })
+      });
+
+      if (!response.body) return;
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let isFirstChunk = true;
+      let botMessageInitialized = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n\n').filter(line => line.trim().startsWith('data:'));
+
+        for (const line of lines) {
+          const data = JSON.parse(line.substring(6));
+
+          if (data.sources && !botMessageInitialized) {
+            stopLoading(); // Hide "Thinking...", start streaming
+            addMessage({ role: 'bot', text: '', sources: data.sources || [] });
+            botMessageInitialized = true;
+          }
+
+          if (data.token) {
+            if (!botMessageInitialized) {
+              // Fallback in case sources arrive late or not at all
+              stopLoading();
+              addMessage({ role: 'bot', text: '', sources: [] });
+              botMessageInitialized = true;
+            }
+            // Append the new token to the last message in the store
+            useAppStore.setState(state => {
+              const lastMessage = state.messages[state.messages.length - 1];
+              if (lastMessage.role === 'bot') {
+                lastMessage.text += data.token;
+              }
+              return { messages: [...state.messages] };
+            });
+          }
+        }
+      }
     } catch (error) {
-      const errorMessage = { role: 'bot' as const, text: 'Sorry, I encountered an error.' };
-      addMessage(errorMessage);
+      console.error("Streaming failed:", error);
+      addMessage({ role: 'bot', text: 'Sorry, an error occurred during streaming.' });
     } finally {
-      stopLoading();
+      stopLoading(); // Ensure loading is always stopped
     }
   };
 
   const handleSourceClick = (source: any) => {
-    // ... (this function remains the same) ...
     if (source.doc_id && source.chunk_id) {
       navigate(`/library/${source.doc_id}?highlight=${source.chunk_id}`);
     }
@@ -65,11 +110,12 @@ const Chat = () => {
       </div>
 
       <div ref={chatLogRef} className="flex-1 p-6 overflow-y-auto space-y-6">
+        {/* --- THIS IS THE COMPLETE, CORRECTED JSX --- */}
         {messages.map((msg, i) => (
           <div key={i} className={`flex items-start gap-4 ${msg.role === 'user' ? 'justify-end' : ''}`}>
             {msg.role === 'bot' && <Bot className="h-8 w-8 text-primary flex-shrink-0" />}
             <div className={`max-w-2xl p-4 rounded-lg ${msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
-              <p className="whitespace-pre-wrap">{msg.text}</p>
+              <p className="whitespace-pre-wrap">{msg.text || ' '}</p>
               {msg.sources && msg.sources.length > 0 && (
                 <div className="mt-3 text-xs border-t border-muted-foreground/20 pt-2">
                   <strong className="text-muted-foreground">Sources:</strong>
@@ -81,8 +127,6 @@ const Chat = () => {
                         size="sm" 
                         onClick={() => handleSourceClick(s)}
                       >
-                        {/* --- THIS IS THE DEFINITIVE FIX --- */}
-                        {/* We use a ternary operator to conditionally render the page number */}
                         {s.filename}
                         {s.page ? ` (p. ${s.page})` : ''}
                       </Button>
@@ -94,10 +138,21 @@ const Chat = () => {
             {msg.role === 'user' && <User className="h-8 w-8 text-muted-foreground flex-shrink-0" />}
           </div>
         ))}
-        {isLoading && <div className="flex items-start gap-4"><Bot className="h-8 w-8 text-primary" /><div className="max-w-lg p-4 rounded-lg bg-muted">Thinking...</div></div>}
+        {/* --- END OF CORRECTED JSX --- */}
+
+        {isLoading && (
+          <div className="flex items-start gap-4">
+            <Bot className="h-8 w-8 text-primary flex-shrink-0" />
+            <div className="max-w-lg p-4 rounded-lg bg-muted flex items-center">
+              <span className="mr-2">Thinking</span>
+              <span className="animate-bounce [animation-delay:-0.3s]">.</span>
+              <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+              <span className="animate-bounce">.</span>
+            </div>
+          </div>
+        )}
       </div>
       <div className="p-4 border-t border-muted">
-        {/* ... (input section remains the same) ... */}
         <div className="flex gap-4">
           <Input
             value={input}

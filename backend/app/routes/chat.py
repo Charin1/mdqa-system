@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from ..services.rag_service import RAGService
-from ..models.api import ChatQueryIn, ChatQueryOut
+from ..models.api import ChatQueryIn
 
 router = APIRouter()
 
-@router.post("/query", response_model=ChatQueryOut)
-def query(payload: ChatQueryIn, service: RAGService = Depends(RAGService)):
-    """Endpoint to ask a question and get an answer from the RAG system."""
-    return service.query(payload)
+@router.post("/query")
+async def query(payload: ChatQueryIn, service: RAGService = Depends(RAGService)):
+    """
+    Endpoint to ask a question and get a streamed answer from the RAG system.
+    """
+    return StreamingResponse(service.query_stream(payload), media_type="text/event-stream")
