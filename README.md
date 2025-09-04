@@ -33,13 +33,15 @@ This project is built with a modern, robust stack featuring a FastAPI backend an
 *   **State-of-the-Art RAG Pipeline:**
     *   **Robust Chunking:** Uses a recursive character splitter to safely and effectively chunk any document, regardless of formatting.
     *   **Top-Tier Embedding:** Employs the powerful `BAAI/bge-m3` model to create nuanced, high-quality vector representations of your text.
+    *   **Query Transformation (HyDE):** Uses the LLM to rewrite user queries into hypothetical documents, significantly improving retrieval accuracy for complex questions.
     *   **Advanced Hybrid Search:** Combines keyword search (BM25) and semantic search, then fuses the results using Reciprocal Rank Fusion (RRF).
-    *   **High-Precision Re-ranking:** Employs a `Cross-Encoder` model to re-rank the initial search results, ensuring only the most relevant context is passed to the LLM for superior accuracy.
+    *   **High-Precision Re-ranking:** Employs a `Cross-Encoder` model to re-rank the initial search results, ensuring only the most relevant context is passed to the LLM.
     *   **High-Quality Generative Answers:** Powered by the **Meta-Llama-3-8B-Instruct** model, providing synthesized, coherent answers instead of just extracting text.
-*   **Universal Hardware Support:** The AI model is loaded via `ctransformers` (llama.cpp), which automatically detects and utilizes the best available hardware (NVIDIA CUDA, Apple Metal GPU, or CPU) on any platform (Windows, macOS, Linux).
+*   **Universal Hardware Support:** The AI model is loaded via `ctransformers` (llama.cpp), which automatically detects and utilizes the best available hardware (NVIDIA CUDA, Apple Metal GPU, or CPU) on any platform.
 *   **Intuitive User Interface:**
     *   A clean, modern, dark-themed UI built with React and Tailwind CSS.
-    *   **Persistent Chat Sessions:** Your conversation history is preserved as you navigate the application, thanks to a global state manager (Zustand).
+    *   **Streaming Responses:** AI answers are streamed token-by-token for a responsive, ChatGPT-like experience.
+    *   **Conversation History:** Automatically saves and lists past conversations. Users can load, continue, or delete previous chats.
     *   **Interactive Source Highlighting:** Clickable source citations below each answer navigate you to the exact chunk in the original document and highlight it, providing instant verifiability.
     *   **Document Library & Chunk Inspector:** Manage your documents and verify their processing by inspecting the individual text chunks.
 *   **System Analytics:** A dashboard to monitor system usage and performance.
@@ -50,9 +52,10 @@ This project is built with a modern, robust stack featuring a FastAPI backend an
 2.  **Chunk:** The text is divided into small, overlapping, and highly focused chunks.
 3.  **Embed:** Each chunk is converted into a vector using the `bge-m3` model.
 4.  **Index:** The chunks and their vectors are stored in a local ChromaDB database.
-5.  **Retrieve:** When you ask a question, the system performs a fast hybrid search to find an initial set of ~25 potentially relevant chunks.
-6.  **Re-rank:** A Cross-Encoder model carefully reads the query and each of the 25 chunks, re-scoring them for accuracy. The top 5-7 chunks are selected.
-7.  **Synthesize:** The question and the highly relevant, re-ranked chunks are formatted into a specific prompt and sent to the **Llama 3** model, which generates a brand new, accurate answer.
+5.  **Transform Query:** When you ask a question, the Llama 3 model first generates a hypothetical, ideal answer to your query (HyDE).
+6.  **Retrieve:** The system performs a fast hybrid search using your original query for keywords and the *hypothetical answer* for semantic meaning to find an initial set of ~25 potentially relevant chunks.
+7.  **Re-rank:** A Cross-Encoder model carefully reads your original query and each of the 25 chunks, re-scoring them for accuracy. The top 5-7 chunks are selected.
+8.  **Synthesize:** The question and the highly relevant, re-ranked chunks are formatted into a specific prompt and sent to the **Llama 3** model, which generates a brand new, accurate answer streamed back to you.
 
 ## Tech Stack
 
@@ -124,26 +127,23 @@ The quality of a RAG system depends on several key parameters. The current setti
 
 *   **For Demo Purposes:** The current settings (`chunk_size=256`, `Llama-3-8B`, `bge-m3` embedding, and a Cross-Encoder) are optimized for high-quality results on modern consumer hardware.
 *   **For Higher Quality:** To improve results further, you could use a larger generation model (like a 70B parameter model, if you have the hardware) or fine-tune the embedding model on your specific document domain.
-*   **For Higher Speed:** To improve performance on older hardware, you could switch to a smaller generation model (like `Llama-3-8B` without the `Instruct` tuning, or a smaller `Mistral` model) and a smaller embedding model (like `bge-small-en-v1.5`).
+*   **For Higher Speed:** To improve performance on older hardware, you could switch to a smaller generation model (like a 3B parameter model) and a smaller embedding model (like `bge-small-en-v1.5`).
 
 Key files for tuning:
 *   `backend/app/core/settings.py`: For `DEFAULT_CHUNK_SIZE` and `DEFAULT_CHUNK_OVERLAP`.
-*   `backend/app/rag/retrieve.py`: For the embedding model (`get_embedding_model`) and re-ranking model (`get_reranker_model`).
-*   `backend/app/rag/answer.py`: For the generation model (`get_llama_llm`).
+*   `backend/app/rag/models.py`: For the embedding, re-ranking, and generation models.
 
 ## Project Roadmap: Future Improvements
 
 This project is a powerful foundation. Here are some potential next steps:
 
-*   **Pluggable Models:**
-    *   **Generation:** Abstract the `answer.py` logic to easily switch between different GGUF models (e.g., `Mistral`, `Qwen`) or even different model loaders (like an Ollama client) via a config setting.
-    *   **Embedding:** Allow the embedding model to be configured via the `.env` file.
-*   **Advanced RAG Techniques:**
-    *   **Query Transformations:** Implement techniques like HyDE (Hypothetical Document Embeddings) to improve retrieval for complex questions by having an LLM rewrite the user's query before searching.
-*   **Production & UX:**
-    *   **Streaming Responses:** Modify the API to stream the LLM's response token by token for a more interactive, ChatGPT-like feel.
+*   **Pluggable Models:** Abstract the model loading logic further to allow switching models (e.g., between `Llama-3`, `Mistral`, or `Qwen`) via a simple configuration change in the `.env` file.
+*   **Advanced Ingestion:**
     *   **Web Page Ingestion:** Add the ability to ingest knowledge directly from a URL.
+    *   **Image Understanding (Multi-Modal):** Integrate a model like LLaVA to allow questions about charts, diagrams, and images within your documents.
+*   **Production & UX:**
     *   **User Authentication:** Add a login system for multi-user support with private document libraries.
+    *   **Docker Production Build:** Create a production-ready `docker-compose.yml` file with Gunicorn for the backend and a static NGINX server for the frontend for robust deployment.
 
 ## Contributing
 
