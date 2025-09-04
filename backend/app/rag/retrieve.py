@@ -1,42 +1,48 @@
 import re
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
-# CORRECTED: Import the CrossEncoder class
-from sentence_transformers import SentenceTransformer, CrossEncoder
 from functools import lru_cache
 import numpy as np
 
 from ..core.settings import settings
 from ..db.chroma_db import get_or_create_collection
+from ..rag.models import get_embedding_model, get_reranker_model, get_llm_and_tokenizer
 
-# --- Embedding and Re-ranking Models ---
-
-@lru_cache(maxsize=1)
-def get_embedding_model():
-    """Loads and caches the state-of-the-art BAAI/bge-m3 embedding model."""
-    return SentenceTransformer("BAAI/bge-m3")
-
-# NEW: Function to load the re-ranking model
-@lru_cache(maxsize=1)
-def get_reranker_model():
-    """
-    Loads and caches a lightweight but powerful Cross-Encoder model for re-ranking.
-    This model is specifically trained to score the relevance of a passage to a query.
-    """
-    # ms-marco-MiniLM-L-6-v2 is a well-regarded, fast, and effective re-ranker.
-    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+# --- Embedding Logic ---
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    """Generates embeddings for a list of texts (document chunks)."""
+    """Generates embeddings for a list of texts."""
     model = get_embedding_model()
     return model.encode(texts, convert_to_numpy=True).tolist()
 
 def embed_text(text: str) -> List[float]:
-    """Generates an embedding for a single text (a user query)."""
+    """Generates an embedding for a single text."""
     instruction = "Represent this sentence for searching relevant passages: "
     return embed_texts([instruction + text])[0]
 
-# --- Production-Grade Chunking Logic (No changes needed here) ---
+
+# --- Hypothetical Document Generation (HyDE) ---
+
+def generate_hypothetical_answer(query: str) -> str:
+    """
+    Uses the main LLM to generate a hypothetical, ideal answer to the user's query.
+    """
+    # We get the LLM from our central models file
+    llm, tokenizer = get_llm_and_tokenizer()
+
+    prompt_data = [
+        {"role": "system", "content": "You are a helpful assistant. Please generate a short, high-quality, hypothetical paragraph that directly answers the following user question. Do not say 'Here is a hypothetical answer.' Just generate the paragraph itself."},
+        {"role": "user", "content": query}
+    ]
+    prompt = tokenizer.apply_chat_template(prompt_data, tokenize=False, add_generation_prompt=True)
+
+    hypothetical_answer = llm(prompt, max_new_tokens=128, temperature=0.7, stop=["<|eot_id|>"])
+    
+    return hypothetical_answer
+
+
+# --- Chunking and Retrieval Logic (No changes from before) ---
+
 def recursive_character_text_splitter(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
     # ... (This function remains the same)
     if len(text) <= chunk_size:
@@ -86,61 +92,43 @@ def reciprocal_rank_fusion(ranked_lists: List[List[Dict]], k: int = 60) -> List[
 
 def retrieve_hybrid(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
-    Performs a two-stage retrieval process:
-    1. Fast Retrieval: Uses hybrid search (BM25 + semantic) to fetch a broad set of candidate documents.
-    2. Accurate Re-ranking: Uses a powerful Cross-Encoder model to re-score the candidates for maximum relevance.
+    Performs a three-stage retrieval process: HyDE, Fast Retrieval, and Re-ranking.
     """
     collection = get_or_create_collection()
     all_docs = collection.get(include=["metadatas", "documents"])
     if not all_docs or not all_docs['ids']:
         return []
 
-    # --- Stage 1: Fast Retrieval ---
-    # We retrieve a larger number of candidates (e.g., 25) to give the re-ranker a good pool to choose from.
-    num_candidates = top_k * 5
+    # Stage 1: Query Transformation (HyDE)
+    hypothetical_answer = generate_hypothetical_answer(query)
 
-    # Keyword Search (BM25)
+    # Stage 2: Fast Retrieval
+    num_candidates = top_k * 5
     tokenized_docs = [doc.split() for doc in all_docs['documents']]
     bm25 = BM25Okapi(tokenized_docs)
     bm25_scores = bm25.get_scores(query.split())
     top_n_bm25_indices = np.argsort(bm25_scores)[::-1][:num_candidates]
-    bm25_results = []
-    for i in top_n_bm25_indices:
-        bm25_results.append({"id": all_docs['ids'][i], "text": all_docs['documents'][i], "metadata": all_docs['metadatas'][i]})
-
-    # Semantic Search (ChromaDB)
-    query_embedding = embed_text(query)
+    bm25_results = [{"id": all_docs['ids'][i], "text": all_docs['documents'][i], "metadata": all_docs['metadatas'][i]} for i in top_n_bm25_indices]
+    query_embedding = embed_text(hypothetical_answer)
     semantic_results_raw = collection.query(
         query_embeddings=[query_embedding],
         n_results=num_candidates,
-        include=["metadatas", "documents", "distances"]
+        include=["metadatas", "documents"]
     )
     semantic_results = []
     if semantic_results_raw and semantic_results_raw['ids'][0]:
         for i, doc_id in enumerate(semantic_results_raw['ids'][0]):
             semantic_results.append({"id": doc_id, "text": semantic_results_raw['documents'][0][i], "metadata": semantic_results_raw['metadatas'][0][i]})
-    
-    # Fuse the results to get a single list of candidates
     candidate_chunks = reciprocal_rank_fusion([bm25_results, semantic_results])
-    
     if not candidate_chunks:
         return []
 
-    # --- Stage 2: Accurate Re-ranking ---
+    # Stage 3: Accurate Re-ranking
     reranker = get_reranker_model()
-    
-    # Create pairs of [query, chunk_text] for the re-ranker
     reranker_input = [[query, chunk['text']] for chunk in candidate_chunks]
-    
-    # Get the new, more accurate scores
     reranker_scores = reranker.predict(reranker_input)
-    
-    # Add the new scores to our candidate chunks
     for i in range(len(candidate_chunks)):
         candidate_chunks[i]['rerank_score'] = reranker_scores[i]
-        
-    # Sort the chunks by the new re-ranker score in descending order
     reranked_results = sorted(candidate_chunks, key=lambda x: x['rerank_score'], reverse=True)
     
-    # Return the final top_k results
     return reranked_results[:top_k]
