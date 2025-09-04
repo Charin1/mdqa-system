@@ -14,7 +14,8 @@ const Chat = () => {
     addMessage, 
     startLoading, 
     stopLoading,
-    startNewChat
+    startNewChat,
+    triggerHistoryRefresh // Get the new trigger action from the store
   } = useAppStore();
 
   const [input, setInput] = useState('');
@@ -48,7 +49,6 @@ const Chat = () => {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let isFirstChunk = true;
       let botMessageInitialized = false;
 
       while (true) {
@@ -90,6 +90,9 @@ const Chat = () => {
       addMessage({ role: 'bot', text: 'Sorry, an error occurred during streaming.' });
     } finally {
       stopLoading(); // Ensure loading is always stopped
+      // After the stream is finished and the conversation is saved,
+      // we trigger a refresh for the history panel.
+      triggerHistoryRefresh();
     }
   };
 
@@ -110,7 +113,6 @@ const Chat = () => {
       </div>
 
       <div ref={chatLogRef} className="flex-1 p-6 overflow-y-auto space-y-6">
-        {/* --- THIS IS THE COMPLETE, CORRECTED JSX --- */}
         {messages.map((msg, i) => (
           <div key={i} className={`flex items-start gap-4 ${msg.role === 'user' ? 'justify-end' : ''}`}>
             {msg.role === 'bot' && <Bot className="h-8 w-8 text-primary flex-shrink-0" />}
@@ -138,7 +140,6 @@ const Chat = () => {
             {msg.role === 'user' && <User className="h-8 w-8 text-muted-foreground flex-shrink-0" />}
           </div>
         ))}
-        {/* --- END OF CORRECTED JSX --- */}
 
         {isLoading && (
           <div className="flex items-start gap-4">

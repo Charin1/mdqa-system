@@ -1,5 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { Upload, Library, MessageSquare, BarChart2, Settings } from 'lucide-react';
+// CORRECTED: Import the new ChatHistory component
+import { ChatHistory } from './ChatHistory';
 
 const navItems = [
   { to: '/', icon: Upload, label: 'Upload' },
@@ -16,7 +18,7 @@ const Sidebar = () => {
         <img src="/mdqa-logo.svg" alt="MDQA System Logo" className="h-8 w-8" />
         <h1 className="text-2xl font-bold">MDQA-System</h1>
       </div>
-      <nav className="flex-1 px-4">
+      <nav className="px-4">
         {navItems.map((item) => (
           <NavLink
             key={item.to}
@@ -35,6 +37,12 @@ const Sidebar = () => {
           </NavLink>
         ))}
       </nav>
+      
+      {/* CORRECTED: Render the ChatHistory component here */}
+      <div className="flex-1 overflow-y-auto">
+        <ChatHistory />
+      </div>
+
       <div className="p-4 text-xs text-muted-foreground">
         Version 1.0.0
       </div>
