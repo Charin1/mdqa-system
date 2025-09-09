@@ -49,6 +49,7 @@ coverage.xml
 # Environments
 .env
 backend/.env
+backend/models
 .venv
 env/
 venv/

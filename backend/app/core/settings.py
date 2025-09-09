@@ -15,23 +15,20 @@ class Settings(BaseSettings):
     """
     Manages application settings using absolute paths for reliability.
     """
+    # --- Model & Cache Configuration ---
+    # CORRECTED: Define a central, project-level directory for all Hugging Face models.
+    HF_HOME_DIR: str = str(BACKEND_ROOT / "models")
+    
     # --- Database ---
     SQLITE_PATH: str = str(BACKEND_ROOT / "data/sqlite/main.db")
-    
-    # CORRECTED: New setting for the embedded ChromaDB data path.
     CHROMA_PERSIST_DIR: str = str(BACKEND_ROOT / "data/chroma")
-    
-    # REMOVED: These are no longer needed for embedded mode.
-    # CHROMA_HOST: str
-    # CHROMA_PORT: int
     
     # --- File Storage ---
     UPLOAD_DIR: str = str(BACKEND_ROOT / "uploads")
     
     # --- RAG Defaults ---
-    DEFAULT_EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-    DEFAULT_CHUNK_SIZE: int = 1000
-    DEFAULT_CHUNK_OVERLAP: int = 150
+    DEFAULT_CHUNK_SIZE: int = 256
+    DEFAULT_CHUNK_OVERLAP: int = 64
     
     # --- OCR ---
     OCR_ENABLED: bool = True
@@ -40,4 +37,9 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-print(f"--- [DEBUG] Settings loaded. ChromaDB persistence directory is: {settings.CHROMA_PERSIST_DIR} ---")
+# This line of code tells the Hugging Face libraries to use our custom directory
+# instead of the default hidden cache. It must be set before any models are loaded.
+os.environ['HF_HOME'] = settings.HF_HOME_DIR
+os.environ['HF_HUB_CACHE'] = settings.HF_HOME_DIR # For newer versions of HF Hub
+
+print(f"--- [INFO] Hugging Face model cache is set to: {os.environ['HF_HOME']} ---")
