@@ -1,3 +1,13 @@
+"""
+Retrieval Module.
+
+Implements the full hybrid retrieval pipeline:
+1. HyDE (Hypothetical Document Embeddings) – query transformation
+2. BM25 keyword search + semantic vector search
+3. Reciprocal Rank Fusion (RRF) to merge results
+4. Cross-Encoder re-ranking for precision
+"""
+
 import re
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
@@ -7,6 +17,7 @@ import numpy as np
 from ..core.settings import settings
 from ..db.chroma_db import get_or_create_collection
 from ..rag.models import get_embedding_model, get_reranker_model, get_llm_and_tokenizer
+
 
 # --- Embedding Logic ---
 
@@ -26,25 +37,56 @@ def embed_text(text: str) -> List[float]:
 def generate_hypothetical_answer(query: str) -> str:
     """
     Uses the main LLM to generate a hypothetical, ideal answer to the user's query.
+    This hypothetical answer is then embedded for semantic search (HyDE technique).
     """
-    # We get the LLM from our central models file
     llm, tokenizer = get_llm_and_tokenizer()
 
     prompt_data = [
         {"role": "system", "content": "You are a helpful assistant. Please generate a short, high-quality, hypothetical paragraph that directly answers the following user question. Do not say 'Here is a hypothetical answer.' Just generate the paragraph itself."},
         {"role": "user", "content": query}
     ]
-    prompt = tokenizer.apply_chat_template(prompt_data, tokenize=False, add_generation_prompt=True)
-
-    hypothetical_answer = llm(prompt, max_new_tokens=128, temperature=0.7, stop=["<|eot_id|>"])
     
+    # 1. Try using tokenizer template
+    prompt = None
+    if tokenizer and tokenizer.chat_template:
+        try:
+             prompt = tokenizer.apply_chat_template(prompt_data, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            pass
+            
+    # 2. Manual Fallback
+    if not prompt:
+        model_type = settings.LLM_MODEL_TYPE.lower()
+        if "mistral" in model_type or "llama" in model_type:
+            prompt = f"<s>[INST] {prompt_data[0]['content']}\n\nQuestion: {query} [/INST]"
+        elif "qwen" in model_type:
+            prompt = f"<|im_start|>system\n{prompt_data[0]['content']}<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
+        else:
+            prompt = f"System: {prompt_data[0]['content']}\nUser: {query}\nAssistant:"
+
+    stop_tokens = []
+    if "qwen" in settings.LLM_MODEL_TYPE.lower():
+        stop_tokens = ["<|im_end|>", "<|im_start|>"]
+    elif "mistral" in settings.LLM_MODEL_TYPE.lower():
+        stop_tokens = ["</s>"]
+    else:
+        stop_tokens = ["User:", "System:"]
+
+    result = llm(
+        prompt,
+        max_new_tokens=128,
+        temperature=0.7,
+        stop=stop_tokens
+    )
+
+    hypothetical_answer = result.strip()
     return hypothetical_answer
 
 
-# --- Chunking and Retrieval Logic (No changes from before) ---
+# --- Chunking Logic ---
 
 def recursive_character_text_splitter(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
-    # ... (This function remains the same)
+    """Recursively splits text into chunks using a hierarchy of separators."""
     if len(text) <= chunk_size:
         return [text]
     separators = ["\n\n", "\n", ". ", " ", ""]
@@ -71,7 +113,7 @@ def recursive_character_text_splitter(text: str, chunk_size: int, chunk_overlap:
     return [c.strip() for c in chunks if c.strip()]
 
 def chunk_text(text: str, chunk_size: int, overlap: int, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # ... (This function remains the same)
+    """Chunks text and attaches metadata to each chunk."""
     chunks_of_text = recursive_character_text_splitter(text, chunk_size, overlap)
     return [{"text": chunk, "metadata": metadata} for chunk in chunks_of_text]
 
@@ -79,7 +121,7 @@ def chunk_text(text: str, chunk_size: int, overlap: int, metadata: Dict[str, Any
 # --- Hybrid Retrieval Logic with Re-ranking ---
 
 def reciprocal_rank_fusion(ranked_lists: List[List[Dict]], k: int = 60) -> List[Dict]:
-    # ... (This function remains the same)
+    """Merges multiple ranked lists using Reciprocal Rank Fusion (RRF)."""
     fused_scores = {}
     for doc_list in ranked_lists:
         for rank, doc in enumerate(doc_list):
@@ -92,7 +134,10 @@ def reciprocal_rank_fusion(ranked_lists: List[List[Dict]], k: int = 60) -> List[
 
 def retrieve_hybrid(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
-    Performs a three-stage retrieval process: HyDE, Fast Retrieval, and Re-ranking.
+    Performs a three-stage retrieval process:
+    1. HyDE – transform query into hypothetical answer
+    2. Fast Retrieval – BM25 keyword + semantic vector search, merged via RRF
+    3. Re-ranking – Cross-Encoder for precision scoring
     """
     collection = get_or_create_collection()
     all_docs = collection.get(include=["metadatas", "documents"])

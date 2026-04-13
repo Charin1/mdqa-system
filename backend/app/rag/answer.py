@@ -1,84 +1,110 @@
-from typing import List, Dict, Any, Tuple, Generator
-from functools import lru_cache
-from ctransformers import AutoModelForCausalLM
-import os
-from huggingface_hub import login
+"""
+Answer Generation Module.
 
-# --- Hugging Face Login ---
-# This is good practice, though not strictly required for this GGUF model.
-HF_TOKEN = os.getenv("HF_TOKEN")
-if HF_TOKEN:
-    print("--- [INFO] Logging in to Hugging Face Hub ---")
-    login(token=HF_TOKEN)
-else:
-    print("--- [WARNING] HF_TOKEN environment variable not set. ---")
+Uses the centralized LLM from models.py to generate answers.
+Supports streaming token-by-token output for a responsive UX.
+"""
+
+from typing import List, Dict, Any, Generator
+from .models import get_llm_and_tokenizer
+from ..core.settings import settings
 
 
-# --- Llama Pro LLM Answer Generation Pipeline (GGUF for Universal Compatibility) ---
-
-@lru_cache(maxsize=1)
-def get_llama_llm():
+def build_answer_prompt(tokenizer, query: str, hits: List[Dict[str, Any]]) -> str:
     """
-    Initializes and caches the Llama-Pro-8B-Instruct GGUF model using ctransformers.
-    """
-    # This is your working model configuration. We are not changing it.
-    llm = AutoModelForCausalLM.from_pretrained(
-        "TheBloke/LLaMA-Pro-8B-Instruct-GGUF",
-        model_file="llama-pro-8b-instruct.Q2_K.gguf", # Using a higher quality quantization
-        model_type="llama",
-        gpu_layers=50 
-    )
-    return llm
-
-def build_llama_pro_prompt(query: str, hits: List[Dict[str, Any]]) -> str:
-    """
-    Builds a prompt following the specific instruction format for Llama Pro Instruct.
+    Builds a prompt using the tokenizer's chat template if available,
+    otherwise falls back to manual formatting based on model type.
     """
     context_texts = [hit['text'] for hit in hits[:5]]
     context = "\n\n".join(context_texts)
 
-    # This is your working prompt format. We are not changing it.
-    prompt = f"""<|system|>
-You are an expert document analyst. Your task is to answer the user's question based *only* on the provided context. Synthesize a coherent, helpful answer. If the context does not contain the information needed to answer the question, you must say "Based on the provided documents, I could not find an answer." Do not use any outside knowledge or make up information.
-<|user|>
+    # 1. Try using the tokenizer's chat template (Best for consistent behavior)
+    if tokenizer and tokenizer.chat_template:
+        messages = [
+            {"role": "system", "content": "You are an expert document analyst. Your task is to answer the user's question based *only* on the provided context. Synthesize a coherent, helpful answer. If the context does not contain the information needed to answer the question, you must say \"Based on the provided documents, I could not find an answer.\" Do not use any outside knowledge or make up information."},
+            {"role": "user", "content": f"CONTEXT:\n---\n{context}\n---\n\nQUESTION: {query}"}
+        ]
+        try:
+            return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception as e:
+            print(f"--- [WARNING] Chat template application failed: {e}. Falling back to manual. ---")
+
+    # 2. Manual Fallback based on Model Type
+    model_type = settings.LLM_MODEL_TYPE.lower()
+    
+    if "mistral" in model_type or "llama" in model_type:
+        # Standard [INST] format for Mistral/Llama
+        prompt = f"""<s>[INST] You are an expert document analyst. Answer the question based ONLY on the context provided.
+        
 CONTEXT:
----
 {context}
----
 
-QUESTION: {query}
-<|assistant|>
+QUESTION:
+{query} [/INST]"""
+        return prompt
+
+    elif "qwen" in model_type:
+        # ChatML format for Qwen
+        prompt = f"""<|im_start|>system
+You are an expert document analyst. Answer based ONLY on the context.<|im_end|>
+<|im_start|>user
+CONTEXT:
+{context}
+
+QUESTION:
+{query}<|im_end|>
+<|im_start|>assistant
 """
-    return prompt
+        return prompt
 
-# CORRECTED: The function is now a generator to support streaming.
-def generate_llama_answer_stream(query: str, hits: List[Dict[str, Any]]) -> Generator[str, None, None]:
+    else:
+        # Generic fallback
+        prompt = f"""System: You are a document analyst. Answer based on the context.
+
+Context:
+{context}
+
+User: {query}
+
+Assistant:"""
+        return prompt
+
+
+def generate_answer_stream(query: str, hits: List[Dict[str, Any]]) -> Generator[str, None, None]:
     """
-    Generates a precise, relevant answer using the local Llama Pro GGUF model
+    Generates a precise, relevant answer using the local GGUF model via ctransformers
     and streams the output token by token.
     """
     if not hits:
         yield "I could not find any relevant information in the provided documents."
         return
 
-    llm = get_llama_llm()
-    prompt = build_llama_pro_prompt(query, hits)
+    llm, tokenizer = get_llm_and_tokenizer()
+    prompt = build_answer_prompt(tokenizer, query, hits)
     
-    # --- THIS IS THE DEFINITIVE FIX ---
-    # We use the exact same llm(...) call that was working before,
-    # and simply add the `stream=True` parameter to it.
+    # Determine stop tokens based on model type
+    stop_tokens = []
+    if "qwen" in settings.LLM_MODEL_TYPE.lower():
+        stop_tokens = ["<|im_end|>", "<|im_start|>"]
+    elif "mistral" in settings.LLM_MODEL_TYPE.lower():
+        stop_tokens = ["</s>"]
+    else:
+        stop_tokens = ["User:", "System:"] # Generic
+
+    # Use ctransformers streaming
     token_generator = llm(
-        prompt, 
-        max_new_tokens=4096, 
-        temperature=0.2, 
-        top_p=0.95, 
-        stop=["<|user|>", "<|system|>"],
+        prompt,
+        max_new_tokens=settings.LLM_MAX_TOKENS,
+        temperature=0.2,
+        top_p=0.95,
+        stop=stop_tokens,
         stream=True
     )
 
-    # We loop over the generator and yield each token as it is produced.
     for token in token_generator:
-        yield token
+        if token:
+            yield token
 
-# This alias connects our new streaming function to the RAG service.
-generate_simple_answer = generate_llama_answer_stream
+
+# Alias for backward compatibility with rag_service.py
+generate_simple_answer = generate_answer_stream

@@ -1,6 +1,3 @@
-# This file can be left empty.```
-
-##### `app/main.py`
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.settings import settings
@@ -10,14 +7,14 @@ from .routes import documents, chat, analytics, config
 
 app = FastAPI(
     title="MDQA-System RAG API",
-    version="1.0.0",
-    description="A modern, robust API for Retrieval-Augmented Generation.",
+    version="2.0.0",
+    description="A modern, fully offline RAG API for document intelligence. Powered by Qwen3 + llama-cpp-python.",
 )
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for simplicity in development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,4 +34,4 @@ def on_startup():
 @app.get("/api/health", tags=["Health"])
 def health_check():
     """Health check endpoint to verify API is running."""
-    return {"status": "ok"}
+    return {"status": "ok", "version": "2.0.0"}
