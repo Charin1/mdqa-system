@@ -25,7 +25,7 @@ class ChunkOut(BaseModel):
 class ChatQueryIn(BaseModel):
     session_id: str
     query: str
-    top_k: int = 5
+    top_k: int = 10  # Fetch 10 candidates for reranking; top 3 are used in the prompt
 
 class ChatQueryOut(BaseModel):
     answer: str

@@ -1,36 +1,32 @@
 """
 Centralized Model Loading Module.
 
-This is the SINGLE source of truth for all AI model instances.
-All models are loaded lazily via @lru_cache and configured through settings.py.
+Single source of truth for all AI model instances.
+All models load lazily via @lru_cache on first use.
 
-Models used:
-  - LLM: Configurable GGUF via ctransformers (Default: Mistral-7B)
-  - Embedding: all-MiniLM-L6-v2 via sentence-transformers (~80MB)
-  - Re-ranker: cross-encoder/ms-marco-MiniLM-L-6-v2 via sentence-transformers (~80MB)
+LLM:       llama-cpp-python (Llama) — GGUF inference with Metal/CUDA GPU
+Embedding: sentence-transformers
+Re-ranker: sentence-transformers CrossEncoder
 """
 
-from ..core.settings import settings
-
-import os
 from functools import lru_cache
-from sentence_transformers import SentenceTransformer, CrossEncoder
-from ctransformers import AutoModelForCausalLM
-from transformers import AutoTokenizer
-from huggingface_hub import hf_hub_download
+from ..core.settings import settings
+import os
 
 
 @lru_cache(maxsize=1)
-def get_embedding_model() -> SentenceTransformer:
+def get_embedding_model():
     """Loads and caches the embedding model."""
+    from sentence_transformers import SentenceTransformer
     model_name = settings.DEFAULT_EMBEDDING_MODEL
     print(f"--- [INFO] Loading embedding model: {model_name} ---")
     return SentenceTransformer(model_name)
 
 
 @lru_cache(maxsize=1)
-def get_reranker_model() -> CrossEncoder:
+def get_reranker_model():
     """Loads and caches the Cross-Encoder re-ranking model."""
+    from sentence_transformers import CrossEncoder
     model_name = settings.RERANKER_MODEL
     print(f"--- [INFO] Loading re-ranking model: {model_name} ---")
     return CrossEncoder(model_name)
@@ -39,39 +35,35 @@ def get_reranker_model() -> CrossEncoder:
 @lru_cache(maxsize=1)
 def get_llm_and_tokenizer():
     """
-    Downloads (if needed) and loads the GGUF LLM via ctransformers.
-    Also loads the tokenizer via transformers (required by ctransformers pipeline).
+    Downloads (if needed) and loads the GGUF model via llama-cpp-python.
+
+    llama-cpp-python (Llama class):
+      - Proper Apple Silicon Metal support (n_gpu_layers=-1 offloads all layers)
+      - Actively maintained, full GGUF support
+      - Streaming output: chunk["choices"][0]["text"]
+
+    Returns (llm, tokenizer) — tokenizer is None (llama-cpp-python handles
+    tokenization internally; chat templates are applied via prompt formatting).
     """
+    from llama_cpp import Llama
+    from huggingface_hub import hf_hub_download
+
     repo_id = settings.LLM_MODEL_REPO
     filename = settings.LLM_MODEL_FILE
-    model_type = settings.LLM_MODEL_TYPE
-    
-    print(f"--- [INFO] Loading tokenizer from HF: {repo_id} ---")
-    # ctransformers doesn't handle chat templates well on its own, so we need the tokenizer
-    # We use trust_remote_code=True for models like Qwen/Mistral/etc.
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
-    except Exception as e:
-        print(f"--- [WARNING] Failed to load tokenizer from {repo_id}: {e} ---")
-        print("--- [INFO] Falling back to default tokenizer behavior ---")
-        tokenizer = None
-    
-    print(f"--- [INFO] Downloading/locating GGUF model: {repo_id}/{filename} ---")
-    
-    # We use ctransformers AutoModelForCausalLM directly
-    # Note: gpu_layers=50 is standard for Apple Silicon on 8B models
-    gpu_layers = 50 if settings.LLM_GPU_LAYERS == -1 else settings.LLM_GPU_LAYERS
-    
-    print(f"--- [INFO] Loading LLM with ctransformers (Type: {model_type}, GPU layers: {gpu_layers}) ---")
-    
-    llm = AutoModelForCausalLM.from_pretrained(
-        repo_id,
-        model_file=filename,
-        model_type=model_type,  # Configurable: mistral, llama, etc.
-        gpu_layers=gpu_layers,
-        context_length=settings.LLM_CONTEXT_SIZE,
-        hf=False # Disable buggy HF compatibility mode for stability
+    n_gpu_layers = settings.LLM_GPU_LAYERS  # -1 = offload all to Metal/CUDA
+
+    print(f"--- [INFO] Locating GGUF model: {repo_id}/{filename} ---")
+    model_path = hf_hub_download(repo_id=repo_id, filename=filename)
+    print(f"--- [INFO] Model path: {model_path} ---")
+
+    print(f"--- [INFO] Loading LLM via llama-cpp-python (n_gpu_layers={n_gpu_layers}) ---")
+    llm = Llama(
+        model_path=model_path,
+        n_ctx=settings.LLM_CONTEXT_SIZE,
+        n_gpu_layers=n_gpu_layers,
+        verbose=False,           # Disable verbose logs now that it's working
     )
-    
     print("--- [INFO] LLM loaded successfully! ---")
-    return llm, tokenizer
+
+    # tokenizer=None — llama-cpp-python handles tokenization internally
+    return llm, None

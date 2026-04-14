@@ -13,6 +13,8 @@ interface AppState {
   isLoading: boolean;
   // CORRECTED: Add a refresh trigger
   historyRefreshTrigger: number;
+  // Voice mode toggle
+  voiceEnabled: boolean;
   
   addMessage: (message: Message) => void;
   startLoading: () => void;
@@ -21,6 +23,8 @@ interface AppState {
   loadConversation: (sessionId: string, messages: Message[]) => void;
   // CORRECTED: Add an action to increment the trigger
   triggerHistoryRefresh: () => void;
+  // Voice toggle action
+  toggleVoice: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -31,6 +35,8 @@ export const useAppStore = create<AppState>((set) => ({
   isLoading: false,
   // CORRECTED: Initialize the trigger
   historyRefreshTrigger: 0,
+  // Voice mode starts disabled
+  voiceEnabled: false,
   
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message]
@@ -52,5 +58,9 @@ export const useAppStore = create<AppState>((set) => ({
   // CORRECTED: Implement the trigger action
   triggerHistoryRefresh: () => set((state) => ({
     historyRefreshTrigger: state.historyRefreshTrigger + 1
+  })),
+  // Voice toggle
+  toggleVoice: () => set((state) => ({
+    voiceEnabled: !state.voiceEnabled
   })),
 }));

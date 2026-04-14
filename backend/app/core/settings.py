@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     PADDLEOCR_LANG: str = "en"
     PADDLEOCR_USE_GPU: bool = False
 
+    # --- Voice / STT (Whisper) ---
+    WHISPER_MODEL_SIZE: str = "base"           # tiny, base, small, medium
+    WHISPER_DEVICE: str = "cpu"                # cpu or auto (for MPS)
+    WHISPER_COMPUTE_TYPE: str = "int8"          # int8 for speed on CPU
+
+    # --- Voice / TTS (Kokoro-82M — loads in-process like Whisper) ---
+    TTS_VOICE: str = "af_heart"       # Default Kokoro voice
+    TTS_ENABLED: bool = True
+    TTS_SPEED: float = 1.0             # Speech speed (0.5 = slow, 2.0 = fast)
+
     # --- Memory Management ---
     PYTORCH_MPS_HIGH_WATERMARK_RATIO: float = 0.0
 

@@ -1,110 +1,107 @@
 """
 Answer Generation Module.
 
-Uses the centralized LLM from models.py to generate answers.
-Supports streaming token-by-token output for a responsive UX.
+Uses llama-cpp-python via the centralized get_llm_and_tokenizer().
+Utilizes create_chat_completion for robust prompt template handling.
+
+Retry strategy:
+  Attempt 1: Top 3 chunks in context
+  Attempt 2: Top 1 chunk (if attempt 1 produced nothing — context may have been too long)
+  Fallback:  Yield informative error message
 """
 
+import json
 from typing import List, Dict, Any, Generator
 from .models import get_llm_and_tokenizer
 from ..core.settings import settings
 
 
-def build_answer_prompt(tokenizer, query: str, hits: List[Dict[str, Any]]) -> str:
+def _build_messages(query: str, hits: List[Dict[str, Any]], n_chunks: int) -> List[Dict[str, str]]:
     """
-    Builds a prompt using the tokenizer's chat template if available,
-    otherwise falls back to manual formatting based on model type.
+    Builds a list of messages for the Chat Completion API.
     """
-    context_texts = [hit['text'] for hit in hits[:5]]
+    context_texts = [h['text'] for h in hits[:n_chunks]]
     context = "\n\n".join(context_texts)
 
-    # 1. Try using the tokenizer's chat template (Best for consistent behavior)
-    if tokenizer and tokenizer.chat_template:
-        messages = [
-            {"role": "system", "content": "You are an expert document analyst. Your task is to answer the user's question based *only* on the provided context. Synthesize a coherent, helpful answer. If the context does not contain the information needed to answer the question, you must say \"Based on the provided documents, I could not find an answer.\" Do not use any outside knowledge or make up information."},
-            {"role": "user", "content": f"CONTEXT:\n---\n{context}\n---\n\nQUESTION: {query}"}
-        ]
-        try:
-            return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        except Exception as e:
-            print(f"--- [WARNING] Chat template application failed: {e}. Falling back to manual. ---")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful document analyst. "
+                "Answer the user question using ONLY the provided context. "
+                "Be concise. If the context lacks the answer, say so."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Context:\n{context}\n\nQuestion: {query}",
+        },
+    ]
+    return messages
 
-    # 2. Manual Fallback based on Model Type
-    model_type = settings.LLM_MODEL_TYPE.lower()
+
+def _stream_tokens(messages: List[Dict[str, str]]) -> Generator[str, None, None]:
+    """
+    Calls llama-cpp-python create_chat_completion with streaming.
+    """
+    llm, _ = get_llm_and_tokenizer()
     
-    if "mistral" in model_type or "llama" in model_type:
-        # Standard [INST] format for Mistral/Llama
-        prompt = f"""<s>[INST] You are an expert document analyst. Answer the question based ONLY on the context provided.
-        
-CONTEXT:
-{context}
+    print(f"--- [INFO] Generating answer via LLM streaming ---")
 
-QUESTION:
-{query} [/INST]"""
-        return prompt
-
-    elif "qwen" in model_type:
-        # ChatML format for Qwen
-        prompt = f"""<|im_start|>system
-You are an expert document analyst. Answer based ONLY on the context.<|im_end|>
-<|im_start|>user
-CONTEXT:
-{context}
-
-QUESTION:
-{query}<|im_end|>
-<|im_start|>assistant
-"""
-        return prompt
-
-    else:
-        # Generic fallback
-        prompt = f"""System: You are a document analyst. Answer based on the context.
-
-Context:
-{context}
-
-User: {query}
-
-Assistant:"""
-        return prompt
+    try:
+        for chunk in llm.create_chat_completion(
+            messages=messages,
+            max_tokens=settings.LLM_MAX_TOKENS,
+            temperature=0.7,
+            top_p=0.95,
+            stream=True,
+        ):
+            delta = chunk["choices"][0]["delta"]
+            if "content" in delta:
+                token = delta["content"]
+                if token:
+                    yield token
+    except Exception as e:
+        print(f"--- [ERROR] llama-cpp-python chat streaming failed: {e} ---")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 def generate_answer_stream(query: str, hits: List[Dict[str, Any]]) -> Generator[str, None, None]:
     """
-    Generates a precise, relevant answer using the local GGUF model via ctransformers
-    and streams the output token by token.
+    Streams generated answer tokens, with a 2-attempt retry strategy.
     """
     if not hits:
         yield "I could not find any relevant information in the provided documents."
         return
 
-    llm, tokenizer = get_llm_and_tokenizer()
-    prompt = build_answer_prompt(tokenizer, query, hits)
-    
-    # Determine stop tokens based on model type
-    stop_tokens = []
-    if "qwen" in settings.LLM_MODEL_TYPE.lower():
-        stop_tokens = ["<|im_end|>", "<|im_start|>"]
-    elif "mistral" in settings.LLM_MODEL_TYPE.lower():
-        stop_tokens = ["</s>"]
-    else:
-        stop_tokens = ["User:", "System:"] # Generic
+    for attempt, n_chunks in enumerate([3, 1], start=1):
+        if attempt > 1:
+            print(f"--- [INFO] No tokens from attempt 1. Retrying with {n_chunks} chunk(s). ---")
 
-    # Use ctransformers streaming
-    token_generator = llm(
-        prompt,
-        max_new_tokens=settings.LLM_MAX_TOKENS,
-        temperature=0.2,
-        top_p=0.95,
-        stop=stop_tokens,
-        stream=True
+        messages = _build_messages(query, hits, n_chunks)
+
+        yielded_any = False
+        try:
+            for token in _stream_tokens(messages):
+                yielded_any = True
+                yield token
+        except Exception as e:
+            print(f"--- [ERROR] Attempt {attempt} raised: {e} ---")
+
+        if yielded_any:
+            print(f"--- [INFO] Attempt {attempt} succeeded with {n_chunks} chunk(s). ---")
+            return
+
+    # Both attempts failed
+    print("--- [WARNING] All attempts exhausted. Yielding fallback. ---")
+    yield (
+        "I retrieved relevant document sections but could not generate a response. "
+        "This may be a model compatibility issue. "
+        "Try asking a more specific question, or check the backend logs."
     )
 
-    for token in token_generator:
-        if token:
-            yield token
 
-
-# Alias for backward compatibility with rag_service.py
+# Backward compat alias
 generate_simple_answer = generate_answer_stream

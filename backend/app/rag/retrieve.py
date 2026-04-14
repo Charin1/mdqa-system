@@ -9,6 +9,7 @@ Implements the full hybrid retrieval pipeline:
 """
 
 import re
+import time
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
 from functools import lru_cache
@@ -39,48 +40,40 @@ def generate_hypothetical_answer(query: str) -> str:
     Uses the main LLM to generate a hypothetical, ideal answer to the user's query.
     This hypothetical answer is then embedded for semantic search (HyDE technique).
     """
-    llm, tokenizer = get_llm_and_tokenizer()
+    print(f"--- [DEBUG] HyDE: Initializing LLM ---")
+    llm, _ = get_llm_and_tokenizer()
 
-    prompt_data = [
-        {"role": "system", "content": "You are a helpful assistant. Please generate a short, high-quality, hypothetical paragraph that directly answers the following user question. Do not say 'Here is a hypothetical answer.' Just generate the paragraph itself."},
-        {"role": "user", "content": query}
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a helpful assistant. "
+                "Please generate a short, high-quality, hypothetical paragraph that directly answers the following user question. "
+                "Do not say 'Here is a hypothetical answer.' Just generate the paragraph itself."
+            )
+        },
+        {
+            "role": "user",
+            "content": query
+        }
     ]
     
-    # 1. Try using tokenizer template
-    prompt = None
-    if tokenizer and tokenizer.chat_template:
-        try:
-             prompt = tokenizer.apply_chat_template(prompt_data, tokenize=False, add_generation_prompt=True)
-        except Exception:
-            pass
-            
-    # 2. Manual Fallback
-    if not prompt:
-        model_type = settings.LLM_MODEL_TYPE.lower()
-        if "mistral" in model_type or "llama" in model_type:
-            prompt = f"<s>[INST] {prompt_data[0]['content']}\n\nQuestion: {query} [/INST]"
-        elif "qwen" in model_type:
-            prompt = f"<|im_start|>system\n{prompt_data[0]['content']}<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
-        else:
-            prompt = f"System: {prompt_data[0]['content']}\nUser: {query}\nAssistant:"
+    print(f"--- [INFO] HyDE: Calling llama-cpp-python (non-streaming) ---")
+    start = time.time()
 
-    stop_tokens = []
-    if "qwen" in settings.LLM_MODEL_TYPE.lower():
-        stop_tokens = ["<|im_end|>", "<|im_start|>"]
-    elif "mistral" in settings.LLM_MODEL_TYPE.lower():
-        stop_tokens = ["</s>"]
-    else:
-        stop_tokens = ["User:", "System:"]
-
-    result = llm(
-        prompt,
-        max_new_tokens=128,
-        temperature=0.7,
-        stop=stop_tokens
-    )
-
-    hypothetical_answer = result.strip()
-    return hypothetical_answer
+    try:
+        result = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=128,
+            temperature=0.7,
+        )
+        hypothetical_answer = result["choices"][0]["message"]["content"].strip()
+        duration = time.time() - start
+        print(f"--- [INFO] HyDE: Succeeded ({duration:.1f}s) ---")
+        return hypothetical_answer
+    except Exception as e:
+        print(f"--- [ERROR] HyDE: Failed: {e}. Falling back to raw query. ---")
+        return query
 
 
 # --- Chunking Logic ---
@@ -139,12 +132,15 @@ def retrieve_hybrid(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     2. Fast Retrieval – BM25 keyword + semantic vector search, merged via RRF
     3. Re-ranking – Cross-Encoder for precision scoring
     """
+    print(f"--- [INFO] Hybrid Retrieval Started: '{query[:50]}...' ---")
+    
     collection = get_or_create_collection()
     all_docs = collection.get(include=["metadatas", "documents"])
     if not all_docs or not all_docs['ids']:
+        print("--- [WARNING] No documents found in collection. ---")
         return []
 
-    # Stage 1: Query Transformation (HyDE)
+    # Stage 1: HyDE
     hypothetical_answer = generate_hypothetical_answer(query)
 
     # Stage 2: Fast Retrieval
@@ -154,6 +150,7 @@ def retrieve_hybrid(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     bm25_scores = bm25.get_scores(query.split())
     top_n_bm25_indices = np.argsort(bm25_scores)[::-1][:num_candidates]
     bm25_results = [{"id": all_docs['ids'][i], "text": all_docs['documents'][i], "metadata": all_docs['metadatas'][i]} for i in top_n_bm25_indices]
+    
     query_embedding = embed_text(hypothetical_answer)
     semantic_results_raw = collection.query(
         query_embeddings=[query_embedding],
@@ -164,16 +161,26 @@ def retrieve_hybrid(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     if semantic_results_raw and semantic_results_raw['ids'][0]:
         for i, doc_id in enumerate(semantic_results_raw['ids'][0]):
             semantic_results.append({"id": doc_id, "text": semantic_results_raw['documents'][0][i], "metadata": semantic_results_raw['metadatas'][0][i]})
+    
     candidate_chunks = reciprocal_rank_fusion([bm25_results, semantic_results])
+    print(f"--- [INFO] Retrieved {len(candidate_chunks)} candidates. ---")
+    
     if not candidate_chunks:
         return []
 
-    # Stage 3: Accurate Re-ranking
+    # Stage 3: Re-ranking
     reranker = get_reranker_model()
     reranker_input = [[query, chunk['text']] for chunk in candidate_chunks]
+    
+    start_rerank = time.time()
     reranker_scores = reranker.predict(reranker_input)
+    duration_rerank = time.time() - start_rerank
+    print(f"--- [INFO] Re-ranking finished ({duration_rerank:.1f}s) ---")
+    
     for i in range(len(candidate_chunks)):
         candidate_chunks[i]['rerank_score'] = reranker_scores[i]
+    
     reranked_results = sorted(candidate_chunks, key=lambda x: x['rerank_score'], reverse=True)
     
+    print(f"--- [INFO] Retrieval Complete. Returning top {top_k}. ---")
     return reranked_results[:top_k]

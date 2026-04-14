@@ -20,6 +20,7 @@ This project is built with a modern stack featuring a FastAPI backend and a Reac
 - [How It Works: The RAG Pipeline](#how-it-works-the-rag-pipeline)
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
+- [Voice Pipeline (STT + TTS)](#voice-pipeline-stt--tts)
 - [Configuration](#configuration)
 - [Tuning for Performance & Quality](#tuning-for-performance--quality)
 - [Project Roadmap](#project-roadmap)
@@ -47,6 +48,10 @@ This project is built with a modern stack featuring a FastAPI backend and a Reac
     *   **Conversation History:** Automatically saves conversations with the ability to resume or delete.
     *   **Interactive Source Highlighting:** Clickable source citations navigate to the exact chunk in the document.
     *   **Document Library & Chunk Inspector:** Manage documents and inspect individual text chunks.
+*   **🎤 Voice Pipeline (STT + TTS):**
+    *   **Speech-to-Text:** Click the mic button and speak your question — transcribed locally by OpenAI Whisper (`faster-whisper`).
+    *   **Text-to-Speech:** Click "Read Aloud" on any bot reply to hear it spoken by Voxtral-4B-TTS (Mistral's frontier TTS model).
+    *   **Voice Picker:** Choose from 20 preset voices (casual, formal, warm, expressive, etc.) grouped by Male/Female via the ⚙️ settings panel.
 *   **Fully Configurable:** All model names, GPU settings, and RAG parameters are configurable via a single `.env` file.
 
 ---
@@ -102,6 +107,8 @@ This project is built with a modern stack featuring a FastAPI backend and a Reac
 | **Embedding Model** | `all-MiniLM-L6-v2` (~80MB) |
 | **Re-ranking Model** | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | **OCR Engine** | PaddleOCR v3 (PP-OCRv5) |
+| **STT (Speech-to-Text)** | `faster-whisper` (OpenAI Whisper, runs on CPU) |
+| **TTS (Text-to-Speech)** | `Voxtral-4B-TTS-2603` via `vllm-omni` |
 
 ---
 
@@ -168,6 +175,80 @@ This project is built with a modern stack featuring a FastAPI backend and a Reac
 
 ---
 
+## Voice Pipeline (STT + TTS)
+
+The voice pipeline adds microphone input (Whisper STT) and read-aloud output (Voxtral TTS) to the chatbot. The two components are independent — STT works out of the box, TTS requires a separate server.
+
+### Part 1: Speech-to-Text (Whisper STT) — Works immediately
+
+STT uses `faster-whisper` which runs fully on CPU. No extra server needed.
+
+**Install the dependency** (if not already done):
+```bash
+cd backend
+uv pip install faster-whisper soundfile
+# or: pip install faster-whisper soundfile
+```
+
+**Enable in the UI:**
+1. Open the chat page at [http://localhost:5173/chat](http://localhost:5173/chat)
+2. Click the **"🔇 Voice"** button in the top-right corner of the chat panel — it turns blue when active
+3. A **🎤 microphone button** appears next to the text input
+4. Click the mic → speak → click again → your speech is transcribed and fills the text box
+5. Press Enter or Send to submit the query normally
+
+**Whisper model size** (configure in `backend/.env`):
+```dotenv
+# Smaller = faster but less accurate. Larger = slower but better.
+WHISPER_MODEL_SIZE=base    # tiny (75MB) | base (150MB) | small (500MB) | medium (1.5GB)
+WHISPER_DEVICE=cpu
+WHISPER_COMPUTE_TYPE=int8  # int8 is fastest on CPU
+```
+> The Whisper model is downloaded automatically from Hugging Face on the first STT request.
+
+---
+
+### Part 2: Text-to-Speech (Kokoro-82M) — Works immediately, no server needed
+
+Kokoro is an 82M parameter TTS model that loads directly in Python — the same lazy-loading pattern as Whisper. No GPU server required. It runs on CPU or Apple Silicon MPS.
+
+**Install the dependency** (if not already done):
+```bash
+pip install "kokoro>=0.9.2" soundfile
+```
+
+**Enable in the UI:**
+1. Click the **Voice** toggle in the chat header to enable voice mode
+2. Click the **⚙️ settings icon** that appears next to it
+3. The voice panel expands — pick your voice from the dropdown
+4. Ask a question and click **"🔊 Read Aloud"** on any bot response
+
+> The Kokoro model (~300 MB) is downloaded automatically on the first TTS request. Subsequent requests use the cached model.
+
+#### Available Voices
+
+| Accent | Male | Female |
+| :--- | :--- | :--- |
+| **American** | `am_adam`, `am_michael` | `af_heart`, `af_bella`, `af_nicole`, `af_sky` |
+| **British** | `bm_george`, `bm_lewis` | `bf_emma`, `bf_isabella` |
+
+Change the default voice in `backend/.env`:
+```dotenv
+TTS_VOICE=af_heart    # or any voice id from the table above
+TTS_SPEED=1.0         # 0.5 = slow, 1.0 = normal, 1.5 = fast
+```
+
+#### Troubleshooting
+
+| Problem | Fix |
+| :--- | :--- |
+| `ModuleNotFoundError: No module named 'kokoro'` | `pip install "kokoro>=0.9.2"` |
+| First TTS request is slow (~5-10s) | Normal — model loads on first call, then cached |
+| Mic button not appearing | Click the **Voice** toggle button first to enable voice mode |
+| STT transcription is empty | Speak clearly; try increasing `WHISPER_MODEL_SIZE=small` in `.env` |
+
+---
+
 ## Configuration
 
 All settings are managed via the `backend/.env` file. Key options:
@@ -184,6 +265,11 @@ All settings are managed via the `backend/.env` file. Key options:
 | `DEFAULT_CHUNK_OVERLAP` | `64` | Overlap between chunks |
 | `OCR_ENABLED` | `true` | Enable/disable PaddleOCR for scanned PDFs |
 | `HF_HOME` | `models` | Forces the use of local `backend/models` folder for all AI model storage |
+| `WHISPER_MODEL_SIZE` | `base` | Whisper STT model size: `tiny`, `base`, `small`, `medium` |
+| `WHISPER_DEVICE` | `cpu` | Device for Whisper: `cpu` or `auto` |
+| `TTS_ENABLED` | `true` | Enable/disable the Kokoro TTS feature |
+| `TTS_VOICE` | `af_heart` | Default Kokoro voice for Read Aloud |
+| `TTS_SPEED` | `1.0` | TTS speech speed (0.5 = slow, 1.5 = fast) |
 
 ---
 
@@ -250,6 +336,7 @@ LLM_GPU_LAYERS=0
 
 ## Project Roadmap
 
+- [x] **Voice Pipeline** — Whisper STT for mic input + Voxtral TTS for read-aloud with 20 preset voices.
 - [ ] **Web Page Ingestion** — Add the ability to ingest knowledge directly from a URL.
 - [ ] **Multi-Modal** — Integrate vision models for charts, diagrams, and image understanding.
 - [ ] **User Authentication** — Add login system for multi-user support.
