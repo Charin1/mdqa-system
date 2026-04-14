@@ -21,19 +21,17 @@ const Chat = () => {
     messages, 
     isLoading, 
     voiceEnabled,
+    selectedVoice,
+    sessionTitle,
+    setSessionTitle,
     addMessage, 
     startLoading, 
     stopLoading,
     startNewChat,
-    toggleVoice,
     triggerHistoryRefresh
   } = useAppStore();
 
   const [input, setInput] = useState('');
-  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState('af_heart');
-  const [voices, setVoices] = useState<VoicePreset[]>([]);
-  const [voicesLoading, setVoicesLoading] = useState(false);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -58,18 +56,6 @@ const Chat = () => {
   // Track which message is currently being spoken
   const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
 
-  // Fetch voice presets when voice mode is enabled
-  useEffect(() => {
-    if (voiceEnabled && voices.length === 0) {
-      setVoicesLoading(true);
-      fetch(`${API_BASE_URL}/api/voice/voices`)
-        .then(r => r.json())
-        .then((data: VoicePreset[]) => setVoices(data))
-        .catch(() => setVoices(buildDefaultVoices()))
-        .finally(() => setVoicesLoading(false));
-    }
-  }, [voiceEnabled]);
-
   useEffect(() => {
     setTimeout(() => {
       chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' });
@@ -88,6 +74,13 @@ const Chat = () => {
 
     const userMessage = { role: 'user' as const, text: input };
     addMessage(userMessage);
+
+    // Auto-set title if it's a "New Chat"
+    if (sessionTitle === 'New Chat') {
+      const cleanTitle = input.length > 40 ? input.slice(0, 40) + '...' : input;
+      setSessionTitle(cleanTitle);
+    }
+
     const currentInput = input;
     setInput('');
     startLoading();
@@ -225,76 +218,15 @@ const Chat = () => {
   return (
     <div className="h-full flex flex-col bg-card rounded-lg border border-muted">
       {/* Header */}
-      <div className="p-4 border-b border-muted flex justify-between items-center">
-        <h2 className="text-lg font-semibold">Chat</h2>
+      <div className="p-4 border-b border-muted flex justify-between items-center group">
+        <h2 className="text-lg font-semibold truncate max-w-[60%]">{sessionTitle}</h2>
         <div className="flex items-center gap-2">
-          {/* Voice Mode Toggle */}
-          <Button
-            variant={voiceEnabled ? "primary" : "outline"}
-            size="sm"
-            onClick={() => { toggleVoice(); setShowVoiceSettings(false); }}
-            title={voiceEnabled ? "Disable voice features" : "Enable voice features"}
-          >
-            {voiceEnabled ? <Volume2 className="mr-2 h-4 w-4" /> : <VolumeX className="mr-2 h-4 w-4" />}
-            Voice
-          </Button>
-
-          {/* Voice Settings button — only shown when voice is enabled */}
-          {voiceEnabled && (
-            <Button
-              variant={showVoiceSettings ? "primary" : "outline"}
-              size="sm"
-              onClick={() => setShowVoiceSettings(v => !v)}
-              title="Voice settings"
-            >
-              <Settings className="h-4 w-4" />
-            </Button>
-          )}
-
           <Button variant="outline" size="sm" onClick={startNewChat}>
             <RefreshCw className="mr-2 h-4 w-4" />
             New Chat
           </Button>
         </div>
       </div>
-
-      {/* Voice Settings Panel */}
-      {voiceEnabled && showVoiceSettings && (
-        <div className="px-4 py-3 border-b border-muted bg-muted/30 space-y-3">
-          <h3 className="text-sm font-semibold text-foreground">Voice Settings</h3>
-
-          {/* Voice Selector */}
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Read Aloud Voice</label>
-            {voicesLoading ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> Loading voices...
-              </div>
-            ) : (
-              <div className="relative">
-                <select
-                  value={selectedVoice}
-                  onChange={e => setSelectedVoice(e.target.value)}
-                  className="w-full appearance-none bg-background border border-muted rounded-md px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
-                >
-                  {(['American', 'British'] as const).map(accent => {
-                    const group = voices.filter(v => v.accent === accent);
-                    if (group.length === 0) return null;
-                    return (
-                      <optgroup key={accent} label={`${accent} Voices`}>
-                        {group.map(v => (
-                          <option key={v.id} value={v.id}>{v.label}</option>
-                        ))}
-                      </optgroup>
-                    );
-                  })}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Voice / TTS error banners */}
       {(voiceError || ttsError) && (
@@ -304,7 +236,10 @@ const Chat = () => {
       )}
 
       {/* Chat messages */}
-      <div ref={chatLogRef} className="flex-1 p-6 overflow-y-auto space-y-6">
+      <div 
+        ref={chatLogRef} 
+        className="flex-1 p-6 overflow-y-auto space-y-6 scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent"
+      >
         {messages.map((msg, i) => (
           <div key={i} className={`flex items-start gap-4 ${msg.role === 'user' ? 'justify-end' : ''}`}>
             {msg.role === 'bot' && <Bot className="h-8 w-8 text-primary flex-shrink-0" />}

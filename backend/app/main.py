@@ -7,7 +7,7 @@ from .routes import documents, chat, analytics, config, voice
 
 app = FastAPI(
     title="MDQA-System RAG API",
-    version="2.0.0",
+    version="2.1.0",
     description="A modern, fully offline RAG API for document intelligence. Powered by Qwen3 + llama-cpp-python.",
 )
 

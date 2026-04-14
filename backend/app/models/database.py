@@ -45,3 +45,9 @@ class Conversation(SQLModel, table=True):
     
     # This field is fine, 'sources' is not a reserved name.
     sources: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSONEncodedDict))
+
+class ChatSession(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True, unique=True)
+    title: str = Field(index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

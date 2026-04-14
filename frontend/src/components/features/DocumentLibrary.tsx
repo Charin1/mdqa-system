@@ -45,11 +45,11 @@ const DocumentLibrary = () => {
   if (isLoading) return <Loader />;
 
   return (
-    <Card>
-      <div className="p-6">
+    <Card className="h-full flex flex-col overflow-hidden">
+      <div className="p-6 flex-shrink-0">
         <h2 className="text-2xl font-semibold">Document Library</h2>
       </div>
-      <div className="border-t border-muted">
+      <div className="flex-1 overflow-y-auto border-t border-muted">
         {documents.length === 0 ? (
           <p className="p-6 text-muted-foreground">No documents uploaded yet.</p>
         ) : (

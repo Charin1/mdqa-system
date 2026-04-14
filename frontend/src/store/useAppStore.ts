@@ -15,6 +15,7 @@ interface AppState {
   historyRefreshTrigger: number;
   // Voice mode toggle
   voiceEnabled: boolean;
+  selectedVoice: string;
   
   addMessage: (message: Message) => void;
   startLoading: () => void;
@@ -23,8 +24,12 @@ interface AppState {
   loadConversation: (sessionId: string, messages: Message[]) => void;
   // CORRECTED: Add an action to increment the trigger
   triggerHistoryRefresh: () => void;
-  // Voice toggle action
+  // Voice actions
   toggleVoice: () => void;
+  setSelectedVoice: (id: string) => void;
+  // Session metadata
+  sessionTitle: string;
+  setSessionTitle: (title: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -37,6 +42,8 @@ export const useAppStore = create<AppState>((set) => ({
   historyRefreshTrigger: 0,
   // Voice mode starts disabled
   voiceEnabled: false,
+  selectedVoice: 'af_heart',
+  sessionTitle: 'New Chat',
   
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message]
@@ -48,19 +55,23 @@ export const useAppStore = create<AppState>((set) => ({
     messages: [
       { role: 'bot', text: "New chat started. How can I assist you?" }
     ],
+    sessionTitle: 'New Chat',
     isLoading: false,
   }),
-  loadConversation: (sessionId, messages) => set({
+  loadConversation: (sessionId, messages, title) => set({
     sessionId: sessionId,
-    messages: messages,
+    messages: messages || [],
+    sessionTitle: title || 'Past Chat',
     isLoading: false,
   }),
   // CORRECTED: Implement the trigger action
   triggerHistoryRefresh: () => set((state) => ({
     historyRefreshTrigger: state.historyRefreshTrigger + 1
   })),
-  // Voice toggle
+  // Voice actions
   toggleVoice: () => set((state) => ({
     voiceEnabled: !state.voiceEnabled
   })),
+  setSelectedVoice: (id) => set({ selectedVoice: id }),
+  setSessionTitle: (title) => set({ sessionTitle: title }),
 }));

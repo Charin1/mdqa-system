@@ -5,6 +5,11 @@ from ..services.rag_service import RAGService
 from ..services.chat_history_service import ChatHistoryService
 from ..models.api import ChatQueryIn
 
+from pydantic import BaseModel
+
+class SessionRenameIn(BaseModel):
+    title: str
+
 router = APIRouter()
 
 # --- Core Chat Endpoint ---
@@ -13,7 +18,7 @@ async def query(payload: ChatQueryIn, service: RAGService = Depends(RAGService))
     """Endpoint to ask a question and get a streamed answer."""
     return StreamingResponse(service.query_stream(payload), media_type="text/event-stream")
 
-# --- NEW: Conversation History Endpoints ---
+# --- Conversation History Endpoints ---
 
 @router.get("/sessions")
 def get_sessions(service: ChatHistoryService = Depends(ChatHistoryService)):
@@ -25,8 +30,13 @@ def get_history(session_id: str, service: ChatHistoryService = Depends(ChatHisto
     """Retrieves all messages for a specific conversation session."""
     return service.get_history(session_id)
 
+@router.patch("/session/{session_id}/title")
+def rename_session(session_id: str, payload: SessionRenameIn, service: ChatHistoryService = Depends(ChatHistoryService)):
+    """Renames a conversation session."""
+    return service.update_session_title(session_id, payload.title)
+
 @router.delete("/session/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_session(session_id: str, service: ChatHistoryService = Depends(ChatHistoryService)):
     """Deletes a full conversation session."""
     service.delete_session(session_id)
-    return None # Return None for 204 status
+    return None
